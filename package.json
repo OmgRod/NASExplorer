@@ -1,0 +1,28 @@
+{
+  "name": "nasexplorer",
+  "version": "1.0.0",
+  "description": "NAS Web OS and File Explorer",
+  "main": "backend/index.js",
+  "scripts": {
+    "setup": "concurrently \"cd frontend && npm i\" \"cd backend && npm i\"",
+    "dev": "concurrently -n \"backend,frontend\" -c \"blue,magenta\" \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "build": "npm run build:frontend",
+    "build:frontend": "npm --prefix frontend run build",
+    "start": "npm run start:backend",
+    "start:backend": "npm --prefix backend start",
+    "start:frontend": "npm --prefix frontend run start",
+    "preview": "npm --prefix frontend run preview",
+    "lint": "concurrently -n \"backend,frontend\" -c \"blue,magenta\" \"npm run lint:backend\" \"npm run lint:frontend\"",
+    "lint:backend": "npm --prefix backend run lint",
+    "lint:frontend": "npm --prefix frontend run lint"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
