@@ -48,11 +48,36 @@ export async function callOMV(service, method, params = null) {
 
 export async function ensureAuth() {
   if (!omvCookie) {
-    console.log('Authenticating with OpenMediaVault RPC...');
-    await callOMV('Auth', 'login', {
-      username: OMV_USER,
-      password: OMV_PASS,
-    });
-    console.log('OMV Authentication successful.');
+    try {
+      console.log('Authenticating with OpenMediaVault RPC...');
+      // Explicitly hit 127.0.0.1 and pass credentials
+      const res = await axios.post(
+        process.env.OMV_URL || 'http://127.0.0.1/rpc.php',
+        {
+          service: 'Auth',
+          method: 'login',
+          params: {
+            username: process.env.OMV_USER || 'admin',
+            password: process.env.OMV_PASS || 'openmediavault',
+          },
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Host': 'localhost', // Some OMV Nginx configs require Host header on loopback
+          },
+        }
+      );
+
+      const setCookie = res.headers['set-cookie'];
+      if (setCookie && setCookie.length > 0) {
+        omvCookie = setCookie[0].split(';')[0];
+        console.log('OMV Authentication successful.');
+      } else if (res.data?.error) {
+        throw new Error(res.data.error.message);
+      }
+    } catch (err) {
+      console.error('OMV Auth failed:', err.message);
+    }
   }
 }
