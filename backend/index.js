@@ -29,15 +29,16 @@ app.use('/api/drives', drivesRoutes);
 app.use('/api/shares', sharesRoutes);
 app.use('/api/files', filesRoutes);
 
-// System Health Check
+// Health Check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date() });
 });
 
-// Serve Vite frontend static files in production
+// Serve Frontend Assets for Vite Production Build
 const frontendDist = path.join(__dirname, '../frontend/dist');
 app.use(express.static(frontendDist));
 
+// Express v5 wildcard route handler
 app.get('/*path', (req, res) => {
   if (!req.path.startsWith('/api')) {
     res.sendFile(path.join(frontendDist, 'index.html'), (err) => {
@@ -49,7 +50,7 @@ app.get('/*path', (req, res) => {
 // Initialize WebSockets
 initWebSocket(server);
 
-// Start HTTP + WS Server
+// Start Server
 server.listen(PORT, () => {
   console.log(`=================================`);
   console.log(` NAS Explorer Backend Active`);

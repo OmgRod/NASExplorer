@@ -1,11 +1,10 @@
 import express from 'express';
 import fs from 'fs/promises';
-import createReadStream from 'fs';
 import path from 'path';
 
 const router = express.Router();
 
-// 1. Browse Folder Contents
+// 1. Directory Content Enumeration
 router.get('/browse', async (req, res) => {
   const targetPath = req.query.path || process.env.DEFAULT_STORAGE_ROOT || '/srv';
 
@@ -40,7 +39,7 @@ router.get('/browse', async (req, res) => {
   }
 });
 
-// 2. Stream / Download File
+// 2. Download / Stream File
 router.get('/download', async (req, res) => {
   const filePath = req.query.path;
   if (!filePath) return res.status(400).json({ error: 'File path required' });
@@ -53,7 +52,7 @@ router.get('/download', async (req, res) => {
   }
 });
 
-// 3. Create New Directory
+// 3. Directory Creation
 router.post('/mkdir', async (req, res) => {
   const { currentPath, folderName } = req.body;
   if (!currentPath || !folderName) {
@@ -69,7 +68,7 @@ router.post('/mkdir', async (req, res) => {
   }
 });
 
-// 4. Delete File or Directory
+// 4. File / Directory Deletion
 router.delete('/delete', async (req, res) => {
   const targetPath = req.query.path;
   if (!targetPath) return res.status(400).json({ error: 'Target path required' });

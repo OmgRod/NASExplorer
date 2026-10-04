@@ -8,22 +8,28 @@ router.get('/', async (req, res) => {
   try {
     await ensureAuth();
 
+    // Query OMV configured share definitions and mounted filesystem points
     const [shares, mounts] = await Promise.all([
       callOMV('ShareMgmt', 'getList').catch(() => []),
-      callOMV('FileSystemMgmt', 'getMountList').catch(() => []),
+      callOMV('FileSystemMgmt', 'enumerateMountedFilesystems').catch(() => []),
     ]);
 
-    const mountMap = new Map(mounts.map((m) => [m.uuid, m.mountpoint]));
+    const mountMap = new Map();
+    if (Array.isArray(mounts)) {
+      mounts.forEach((m) => {
+        if (m.uuid) mountMap.set(m.uuid, m.mountpoint);
+      });
+    }
 
-    const resolvedShares = shares.map((share) => {
-      const baseMount = mountMap.get(share.mntentuuid) || '';
+    const resolvedShares = (Array.isArray(shares) ? shares : []).map((share) => {
+      const baseMount = mountMap.get(share.mntentuuid) || '/srv';
       const absolutePath = path.join(baseMount, share.reldirpath || '');
 
       return {
         id: share.uuid,
         name: share.name,
         comment: share.comment || '',
-        relativePath: share.reldirpath,
+        relativePath: share.reldirpath || '',
         absolutePath,
       };
     });
