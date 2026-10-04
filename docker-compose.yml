@@ -1,0 +1,17 @@
+services:
+  nas-explorer:
+    build: .
+    container_name: nas-explorer
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      PORT: 5000
+      DEFAULT_STORAGE_ROOT: /srv
+      OMV_URL: ${OMV_URL:-http://host.docker.internal/rpc.php}
+      OMV_USER: ${OMV_USER:-admin}
+      OMV_PASS: ${OMV_PASS:-openmediavault}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ${NAS_STORAGE_PATH:-/srv}:/srv

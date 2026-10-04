@@ -1,48 +1,80 @@
 import express from 'express';
-import { callOMV, ensureAuth } from '../omvClient.js';
+import { exec } from 'child_process';
+import util from 'util';
+import { callOMVWithReq } from '../omvClient.js';
 
+const execPromise = util.promisify(exec);
 const router = express.Router();
 
-router.get('/', async (req, res) => {
-  try {
-    await ensureAuth();
+// Native Linux fallback when OMV RPC denies non-admin context roles
+async function getFallbackDrives() {
+  const { stdout } = await execPromise('df -B1 --output=source,fstype,size,used,avail,target');
+  const lines = stdout.trim().split('\n').slice(1);
 
-    // Query physical disks and mounted filesystems using modern OMV RPC endpoints
-    const [disks, mountedFs] = await Promise.all([
-      callOMV('Disks', 'getList').catch(() => []),
-      callOMV('FileSystemMgmt', 'enumerateMountedFilesystems').catch(() => 
-        callOMV('FileSystemMgmt', 'getList', { start: 0, limit: -1 }).catch(() => [])
-      ),
-    ]);
-
-    const drives = (Array.isArray(mountedFs) ? mountedFs : []).map((fs) => {
-      const parentDisk = (Array.isArray(disks) ? disks : []).find(
-        (d) => fs.devicefile && d.devicefile && fs.devicefile.startsWith(d.devicefile)
-      );
-
-      const total = Number(fs.size) || 0;
-      const used = Number(fs.used) || 0;
-      const available = Number(fs.available) || Number(fs.free) || 0;
+  return lines
+    .filter((line) => line.startsWith('/dev/'))
+    .map((line) => {
+      const [device, fstype, totalStr, usedStr, availStr, target] = line.trim().split(/\s+/);
+      const total = Number(totalStr) || 0;
+      const used = Number(usedStr) || 0;
+      const available = Number(availStr) || 0;
       const usedPercentage = total > 0 ? Math.round((used / total) * 100) : 0;
 
       return {
+        id: target,
+        name: target === '/' ? 'Root System' : target.split('/').pop() || 'Storage Drive',
+        device,
+        mountPoint: target,
+        filesystem: fstype,
+        capacity: { total, used, available, usedPercentage },
+      };
+    });
+}
+
+router.get('/', async (req, res) => {
+  try {
+    const [disks, mountedFs] = await Promise.all([
+      callOMVWithReq(req, 'DiskMgmt', 'enumerateDevices')
+        .catch(() => callOMVWithReq(req, 'DiskMgmt', 'getList').catch(() => [])),
+      callOMVWithReq(req, 'FileSystemMgmt', 'enumerateMountedFilesystems')
+        .catch(() => callOMVWithReq(req, 'FileSystemMgmt', 'getList', { start: 0, limit: -1 }).catch(() => [])),
+    ]);
+
+    const diskList = Array.isArray(disks) ? disks : [];
+    const fsList = Array.isArray(mountedFs) ? mountedFs : [];
+
+    if (fsList.length === 0) throw new Error('Invalid context role');
+
+    const drives = fsList.map((fs) => {
+      const devicePath = fs.canonicaldevicefile || fs.devicefile || fs.device || fs.fsname || '';
+      const total = Number(fs.size) || 0;
+      const used = Number(fs.used) || 0;
+      const available = Number(fs.available) || Number(fs.free) || 0;
+
+      return {
         id: fs.uuid || fs.devicefile || fs.mountpoint,
-        name: fs.label || (parentDisk ? `${parentDisk.vendor || ''} ${parentDisk.model || ''}`.trim() : 'Storage Volume'),
-        device: fs.devicefile || fs.fsname || 'N/A',
+        name: fs.label || 'Storage Volume',
+        device: devicePath,
         mountPoint: fs.mountpoint || '',
         filesystem: fs.type || fs.fstype || 'ext4',
         capacity: {
           total,
           used,
           available,
-          usedPercentage,
+          usedPercentage: total > 0 ? Math.round((used / total) * 100) : 0,
         },
       };
     });
 
     res.json(drives);
   } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch drive stats', details: err.message });
+    // If OMV RPC rejects the user's role context, return local system drives via df
+    try {
+      const fallbackDrives = await getFallbackDrives();
+      res.json(fallbackDrives);
+    } catch (fallbackErr) {
+      res.status(403).json({ error: 'Access denied', details: err.message });
+    }
   }
 });
 

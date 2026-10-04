@@ -1,18 +1,14 @@
 import express from 'express';
 import path from 'path';
-import { callOMV, ensureAuth } from '../omvClient.js';
+import { getAccessibleShares } from '../permissions.js';
+import { callOMVWithReq } from '../omvClient.js';
 
 const router = express.Router();
 
 router.get('/', async (req, res) => {
   try {
-    await ensureAuth();
-
-    // Query OMV configured share definitions and mounted filesystem points
-    const [shares, mounts] = await Promise.all([
-      callOMV('ShareMgmt', 'getList').catch(() => []),
-      callOMV('FileSystemMgmt', 'enumerateMountedFilesystems').catch(() => []),
-    ]);
+    const shares = await getAccessibleShares(req);
+    const mounts = await callOMVWithReq(req, 'FileSystemMgmt', 'enumerateMountedFilesystems').catch(() => []);
 
     const mountMap = new Map();
     if (Array.isArray(mounts)) {
@@ -36,7 +32,7 @@ router.get('/', async (req, res) => {
 
     res.json(resolvedShares);
   } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch OMV shares', details: err.message });
+    res.status(401).json({ error: 'Failed to fetch OMV shares', details: err.message });
   }
 });
 

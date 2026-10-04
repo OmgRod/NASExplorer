@@ -8,6 +8,7 @@ import dotenv from 'dotenv';
 import drivesRoutes from './routes/drives.js';
 import sharesRoutes from './routes/shares.js';
 import filesRoutes from './routes/files.js';
+import authRoutes from './routes/auth.js';
 import { initWebSocket } from './websocket.js';
 
 dotenv.config();
@@ -25,13 +26,20 @@ app.use(cors());
 app.use(express.json());
 
 // API Routes
+app.use('/api/auth', authRoutes);
 app.use('/api/drives', drivesRoutes);
 app.use('/api/shares', sharesRoutes);
 app.use('/api/files', filesRoutes);
 
 // Health Check
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date() });
+  res.json({
+    status: 'ok',
+    timestamp: new Date(),
+    uptime: process.uptime(),
+    storageRoot: process.env.DEFAULT_STORAGE_ROOT || '/srv',
+    node: process.version,
+  });
 });
 
 // Serve Frontend Assets for Vite Production Build

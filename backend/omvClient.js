@@ -4,30 +4,46 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const OMV_URL = process.env.OMV_URL || 'http://127.0.0.1/rpc.php';
-const OMV_USER = process.env.OMV_USER || 'admin';
-const OMV_PASS = process.env.OMV_PASS || 'openmediavault';
-
-let sessionId = null;
 
 /**
- * Authenticates with OMV using the Session::login service endpoint.
- * Captures the session token for the X-OPENMEDIAVAULT-SESSIONID header.
+ * Helper to extract username and password from HTTP headers.
+ * Supports standard HTTP Basic Auth or custom x-omv-* headers,
+ * falling back to .env defaults if none are supplied.
  */
-export async function ensureAuth() {
-  if (sessionId) return;
+export function getCredentialsFromReq(req) {
+  let username = process.env.OMV_USER || 'admin';
+  let password = process.env.OMV_PASS || 'openmediavault';
 
+  // 1. Check HTTP Basic Authorization header
+  const authHeader = req.headers['authorization'];
+  if (authHeader && authHeader.startsWith('Basic ')) {
+    const credentials = Buffer.from(authHeader.split(' ')[1], 'base64').toString('ascii');
+    const [user, pass] = credentials.split(':');
+    if (user && pass) {
+      username = user;
+      password = pass;
+    }
+  } 
+  // 2. Check custom headers
+  else if (req.headers['x-omv-username'] && req.headers['x-omv-password']) {
+    username = req.headers['x-omv-username'];
+    password = req.headers['x-omv-password'];
+  }
+
+  return { username, password };
+}
+
+/**
+ * Obtains an active session ID from OMV for a given set of credentials.
+ */
+export async function authenticateUser(username, password) {
   try {
-    console.log(`Authenticating with OpenMediaVault RPC at ${OMV_URL}...`);
-
     const response = await axios.post(
       OMV_URL,
       {
         service: 'Session',
         method: 'login',
-        params: {
-          username: OMV_USER,
-          password: OMV_PASS,
-        },
+        params: { username, password },
       },
       {
         headers: {
@@ -38,21 +54,24 @@ export async function ensureAuth() {
       }
     );
 
-    // OMV 7+ returns the session identifier in the response body or set-cookie header
-    if (response.data?.response) {
-      // Check response body for session ID or token
-      sessionId = response.data.response.authenticated
-        ? response.data.response.sessionid || response.data.response.token
-        : null;
-    }
+    let sessionId = null;
 
-    // Fallback: Check set-cookie header for OMVSESSID
-    if (!sessionId && response.headers['set-cookie']) {
-      const setCookie = response.headers['set-cookie'];
+    // Check set-cookie header for OMVSESSID
+    const setCookie = response.headers['set-cookie'];
+    if (setCookie && setCookie.length > 0) {
       const sessCookie = setCookie.find((c) => c.includes('OMVSESSID'));
       if (sessCookie) {
-        sessionId = sessCookie.split(';')[0].split('=')[1];
+        const rawValue = sessCookie.split(';')[0];
+        sessionId = rawValue.includes('=') ? rawValue.split('=')[1] : rawValue;
       }
+    }
+
+    // Fallback: Check response body payload
+    if (!sessionId && response.data?.response) {
+      const resData = response.data.response;
+      if (typeof resData === 'string') sessionId = resData;
+      else if (resData.sessionid) sessionId = resData.sessionid;
+      else if (resData.token) sessionId = resData.token;
     }
 
     if (response.data?.error) {
@@ -60,58 +79,46 @@ export async function ensureAuth() {
     }
 
     if (!sessionId) {
-      // If authentication flag passed but no explicit ID was returned, set placeholder flag
-      sessionId = 'authenticated-session';
+      throw new Error('Authentication succeeded but failed to capture OMV session ID');
     }
 
-    console.log('OMV Authentication successful.');
+    return sessionId;
   } catch (err) {
-    sessionId = null;
     const msg = err.response?.data?.error?.message || err.message;
-    console.error(`OMV Auth failed: ${msg}`);
-    throw new Error(`Authentication failed: ${msg}`);
+    console.error(`OMV Auth failed for user ${username}: ${msg}`);
+    throw new Error(`Unauthorized: ${msg}`);
   }
 }
 
 /**
- * Calls an OMV JSON-RPC endpoint with the session header attached.
+ * Main execution function: Authenticates dynamically with credentials from req
+ * and invokes the target OMV RPC method.
  */
-export async function callOMV(service, method, params = null) {
-  await ensureAuth();
+export async function callOMVWithReq(req, service, method, params = null) {
+  const { username, password } = getCredentialsFromReq(req);
+  const sessionId = await authenticateUser(username, password);
 
   try {
-    const headers = {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-    };
-
-    if (sessionId) {
-      headers['X-OPENMEDIAVAULT-SESSIONID'] = sessionId;
-      headers['Cookie'] = `OMVSESSID=${sessionId}`;
-    }
-
     const response = await axios.post(
       OMV_URL,
       { service, method, params },
-      { headers, timeout: 10000 }
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'X-OPENMEDIAVAULT-SESSIONID': sessionId,
+          'Cookie': `OMVSESSID=${sessionId}`,
+        },
+        timeout: 10000,
+      }
     );
 
     if (response.data?.error) {
-      // Handling expired or invalid session token (Code 4001/5001)
-      if (response.data.error.code === 4001 || response.data.error.code === 5001) {
-        console.warn('OMV Session expired. Resetting token and re-authenticating...');
-        sessionId = null;
-        await ensureAuth();
-        return callOMV(service, method, params);
-      }
       throw new Error(`OMV Error [${response.data.error.code}]: ${response.data.error.message}`);
     }
 
     return response.data?.response;
   } catch (error) {
-    if (error.response?.status === 401) {
-      sessionId = null;
-    }
     console.error(`RPC Call Failed (${service}.${method}):`, error.response?.data?.error?.message || error.message);
     throw error;
   }
